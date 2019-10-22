@@ -7,19 +7,6 @@
 #include <string.h>
 #include <time.h>
 
-#ifndef _H_HELPER // once-only header
+#ifndef _H_HELPER 
 #define _H_HELPER
-
-void
-computeNextTemp(size_t ,
-                size_t ,
-                const double* ,
-                int ,
-                int ,
-                double ,
-                double* );
-double
-computeAverage(const double* , int , int );
-;
-
 #endif
