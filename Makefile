@@ -1,20 +1,17 @@
-CC := gcc
-CFLAGS := -std=c11 -O3 -Wall -flto -march=native -ffast-math
-LIBS := -lm
+CC := mpicc 
+CFLAGS := -std=c11 -O3 -Wall -pthread -flto -ffast-math -march=native
+LIBS := -lpthread -lm
 
 OBJS := heat_diffusion.o 
 
-.PHONY: all test clean
+.PHONY: all clean
 all: heat_diffusion 
 
 # Rule to generate object files:
 heat_diffusion: $(OBJS) 
 	$(CC) -o $@ $(OBJS) $(CFLAGS) $(LIBS)
 
-$(OBJS) : heat_diffusion.h
+$(OBJS) : helper.h
 
-test:
-	tar -czvf heat_diffusion.tar.gz heat_diffusion.c heat_diffusion.h Makefile
-	./check_submission.py heat_diffusion.tar.gz
 clean:
-	rm -rvf *.o heat_diffusion extracted/ heat_diffusion.tar.gz vgcore*
+	rm -rvf *.o heat_diffusion 

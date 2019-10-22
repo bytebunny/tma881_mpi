@@ -1,109 +1,261 @@
-#include "heat_diffusion.h"
+#include "helper.h"
+#include "mpi.h"
 
-int main(int argc, char* argv[])
+int
+main(int argc, char* argv[])
 {
-  int niter=0;
-  double c=0.;
+  MPI_Init(NULL, NULL);
+  // double strtim, endtim, tiktork;
+  // double strtim = MPI_Wtime();
+  int nmb_mpi_proc, mpi_rank;
+  MPI_Comm mpiworld = MPI_COMM_WORLD;
+
+  MPI_Comm_size(mpiworld, &nmb_mpi_proc);
+  MPI_Comm_rank(mpiworld, &mpi_rank);
+
+  int niter = 0;
+  double c = 0.0;
   char* ptr1 = NULL;
   char* ptr2 = NULL;
-  if (argc == 3 ) {
-    for ( size_t ix = 1; ix < argc; ++ix ) {
-      ptr1 = strchr(argv[ix], 'n' );
-      ptr2 = strchr(argv[ix], 'd' );
-      if ( ptr1 ){
-  	niter = strtol(++ptr1, NULL, 10);
-      } else if ( ptr2 ) {
-  	c = atof(++ptr2);
+  if (argc == 3) {
+    for (size_t ix = 1; ix < argc; ++ix) {
+      ptr1 = strchr(argv[ix], 'n');
+      ptr2 = strchr(argv[ix], 'd');
+      if (ptr1) {
+        niter = strtol(++ptr1, NULL, 10);
+      } else if (ptr2) {
+        c = atof(++ptr2);
       }
     }
   } else {
-    printf("Invalid number of arguments. Correct syntax is: heat_diffusion -n#numberOfTimeSteps4 -d#diffusionConstant\n");
-    exit(0);
+    printf("Invalid number of arguments. Correct syntax is: heat_diffusion "
+           "-n#numberOfTimeSteps4 -d#diffusionConstant\n");
+    return 1;
   }
+  const double c1 = 1 - c;
+  const double c0 = c;
+  // strtim = MPI_Wtime();
 
-  int nx=0, ny=0;
+  int nx, ny;
   char line[80];
-  FILE *input = fopen("diffusion", "r");
-  int i=0, j=0;
-  double t=0.;
-  if ( input == NULL ) {
-    perror("Error opening file");
-    exit(0);
+  FILE* input;
+  if (mpi_rank == 0) {
+    input = fopen("diffusion", "r");
+    if (input == NULL) {
+      perror("Error opening file");
+      return 2;
+    }
+    fgets(line, sizeof(line), input);
+    sscanf(line, "%d %d", &ny, &nx);
   }
-  //read the first line
-  fgets( line, sizeof(line), input);
-  sscanf(line, "%d %d", &nx, &ny);
-  //store initial values (note: row major order)
-  double* ivEntries = (double*) malloc( sizeof(double)*nx*ny);
-  for (size_t ix = 0; ix < nx*ny; ++ix) {
-    ivEntries[ix] = 0;
-  }
-  //read the rest
-  while ( fgets(line, sizeof(line), input) != NULL) {
-    sscanf(line, "%d %d %lf", &i, &j, &t);
-    ivEntries[i*ny + j] = t;
-  }
-  fclose(input);
+  MPI_Bcast(&nx, 1, MPI_INT, 0, mpiworld);
+  MPI_Bcast(&ny, 1, MPI_INT, 0, mpiworld);
+  int nx2 = nx + 2;
+  int ny2 = ny + 2;
+  int nx2ny2 = (nx2) * (ny2);
 
-  double* nextTimeEntries = (double*) malloc(sizeof(double)*nx*ny);
+  size_t const ix_sub_m = (nx - 1) / nmb_mpi_proc + 1;
+  int lens[nmb_mpi_proc];
+  int poss[nmb_mpi_proc];
+  // int *lens = (int *)malloc(nmb_mpi_proc * sizeof(int));
+  // int *poss = (int *)malloc(nmb_mpi_proc * sizeof(int));
+  if (mpi_rank == 0) {
+    for (size_t jx = 0, pos = 0; jx < nmb_mpi_proc; ++jx, pos += ix_sub_m) {
+      lens[jx] = ix_sub_m < nx - pos ? ix_sub_m : nx - pos;
+      poss[jx] = pos + 1;
+    }
+  }
+  MPI_Bcast(lens, nmb_mpi_proc, MPI_INT, 0, mpiworld);
+  MPI_Bcast(poss, nmb_mpi_proc, MPI_INT, 0, mpiworld);
+  int loclen = lens[mpi_rank];
+  int lastNodeRnk = nmb_mpi_proc - 1;
 
-  //compute the temperatures in next time step
-  for ( int n = 0; n < niter; ++n) {
-    for ( int ix = 0; ix < nx; ++ix){
-      for ( int jx = 0; jx < ny; ++jx) {
-        double hij, hijW, hijE, hijS, hijN;
-        hij = ivEntries[ix*ny + jx];
-        hijW = ( jx-1 >= 0 ? ivEntries[ix*ny + jx-1] : 0. );
-        hijE = ( jx+1 < ny ? ivEntries[ix*ny + jx+1] : 0.);
-        hijS = ( ix+1 < nx ? ivEntries[(ix+1)*ny + jx] : 0.);
-        hijN = ( ix-1 >= 0 ? ivEntries[(ix-1)*ny + jx] : 0.);
-        
-        nextTimeEntries[ix*ny + jx] = computeNextTemp(&hij, &hijW, &hijE, &hijS, &hijN, &c);
+  double* ivEntriesFull;
+  double* ivEntries;
+  double* nextTimeEntries;
+  if (mpi_rank == 0) {
+    ivEntriesFull = (double*)calloc(sizeof(double), nx2ny2);
+  }
+  ivEntries = (double*)calloc(sizeof(double), (loclen + 2) * ny2);
+  nextTimeEntries = (double*)calloc(sizeof(double), (loclen + 2) * ny2);
+
+  // read the first line
+  if (mpi_rank == 0) {
+    // store initial values (note: row major order)
+    int i, j;
+    double t;
+    while (fgets(line, sizeof(line), input) != NULL) {
+      sscanf(line, "%d %d %lf", &j, &i, &t);
+      ivEntriesFull[(i + 1) * (ny + 2) + j + 1] = t;
+    }
+    fclose(input);
+
+    memcpy(ivEntries, ivEntriesFull, sizeof(double) * (lens[0] + 2) * ny2);
+
+    if (nmb_mpi_proc > 1) {
+      for (size_t ix = 1; ix < nmb_mpi_proc; ix++) {
+        MPI_Send(ivEntriesFull + (poss[ix] - 1) * ny2,
+                 (lens[ix] + 2) * ny2,
+                 MPI_DOUBLE,
+                 ix,
+                 0,
+                 mpiworld);
       }
     }
-    memcpy(ivEntries, nextTimeEntries, nx*ny*sizeof(double));
+  }
+  if (mpi_rank > 0) {
+    MPI_Recv(ivEntries, (loclen + 2) * ny2, MPI_DOUBLE, 0, 0, mpiworld, NULL);
   }
 
-  //compute average temperature
-  double avg = computeAverage(nextTimeEntries, nx, ny);
+  // endtim = MPI_Wtime();
+  // tiktork = endtim - strtim;
+  // if (mpi_rank == 0) {
+  //   printf("send file to nodes time %f\n", tiktork);
+  // }
 
-  double* avgDiffEntries = (double*) malloc(sizeof(double)*nx*ny);
-  for (int ix = 0; ix < nx*ny; ++ix) {
-    avgDiffEntries[ix] = 0.;
+  double sum = 0.0;
+  // compute the temperatures in next time step
+  // double itrtim = 0.0, msgtim = 0.0;
+  for (int n = 0; n < niter; ++n) {
+    // strtim = MPI_Wtime();
+    for (int ix = 1; ix < loclen + 1; ++ix) {
+      for (int jx = 1; jx < ny + 1; ++jx) {
+
+        double hij = ivEntries[ix * (ny2) + jx];
+        double hijW = ivEntries[ix * (ny2) + jx - 1];
+        double hijE = ivEntries[ix * (ny2) + jx + 1];
+        double hijS = ivEntries[(ix + 1) * (ny2) + jx];
+        double hijN = ivEntries[(ix - 1) * (ny2) + jx];
+
+        nextTimeEntries[ix * (ny2) + jx] =
+          hij * c1 + 0.25 * c0 * (hijW + hijE + hijS + hijN);
+        if (n + 1 == niter) {
+          sum += nextTimeEntries[ix * (ny2) + jx];
+        }
+      }
+    }
+    // endtim = MPI_Wtime();
+    // itrtim += endtim - strtim;
+
+    double* swp = nextTimeEntries;
+    nextTimeEntries = ivEntries;
+    ivEntries = swp;
+
+    // strtim = MPI_Wtime();
+    if (nmb_mpi_proc > 1) {
+      // messaging from rank 0 to rank n
+      if (mpi_rank == 0) {
+        // send the curren rank last line to the right rank
+        double* sendind = ivEntries + (loclen) * (ny2);
+        MPI_Send(sendind, ny2, MPI_DOUBLE, 1, 0, mpiworld);
+        // receive right rank top line to the curren rank btm - 1
+        double* recvind = ivEntries + (loclen + 1) * (ny2);
+        MPI_Recv(recvind, ny2, MPI_DOUBLE, 1, 0, mpiworld, NULL);
+      } else if (mpi_rank == lastNodeRnk) {
+
+        // receive left rank last line to the curren rank top - 1
+        double* recvind = ivEntries;
+        MPI_Recv(recvind, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld, NULL);
+        // send the curren rank top line to the left rank
+        double* sendind = ivEntries + (ny2);
+        MPI_Send(sendind, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld);
+      } else {
+
+        // receive left rank last line to the curren rank top - 1
+        double* recvindl2r = ivEntries;
+        MPI_Recv(recvindl2r, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld, NULL);
+        // send the curren rank last line to the right rank
+        double* sendindl2r = ivEntries + loclen * (ny2);
+        MPI_Send(sendindl2r, ny2, MPI_DOUBLE, mpi_rank + 1, 0, mpiworld);
+
+        // send the curren rank top line to the right rank
+        double* sendindr2l = ivEntries + (ny2);
+        MPI_Send(sendindr2l, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld);
+        // receive right rank top line to the curren rank btm - 1
+        double* recvindr2l = ivEntries + (loclen + 1) * (ny2);
+        MPI_Recv(recvindr2l, ny2, MPI_DOUBLE, mpi_rank + 1, 0, mpiworld, NULL);
+      }
+    }
+    // endtim = MPI_Wtime();
+    // msgtim += endtim - strtim;
+  } // end of iteration
+
+  // if (mpi_rank == 0) {
+  //   printf("iteration time %f\n", itrtim);
+  //   printf("msg passing time %f\n", msgtim);
+  // }
+  // printf("rank %d\n", mpi_rank);
+  // for (size_t ii = 1; ii < loclen + 1; ii++) {
+  //   for (size_t ij = 1; ij < ny + 1; ij++) {
+  //     printf("%f\t", ivEntries[ii * (ny + 2) + ij]);
+  //   }
+  //   printf("\b\n");
+  // }
+
+  // strtim = MPI_Wtime();
+
+  double redSum = 0.0;
+  MPI_Reduce(&sum, &redSum, 1, MPI_DOUBLE, MPI_SUM, 0, mpiworld);
+  double avg = redSum / (double)(nx * ny);
+  /*
+  double abssum = 0.0;
+  for (int ix = 1; ix < nx + 1; ++ix) {
+    for (int jx = 1; jx < ny + 1; ++jx) {
+      double absdelta = ivEntries[ix * (ny + 2) + jx] - avg;
+      absdelta = (absdelta < 0.0 ? -absdelta : absdelta);
+      abssum += absdelta;
+    }
+  }
+  */
+  MPI_Bcast(&avg, 1, MPI_DOUBLE, 0, mpiworld);
+  double abssum = 0.0;
+  for (int ix = 1; ix < loclen + 1; ++ix) {
+    for (int jx = 1; jx < ny + 1; ++jx) {
+      double absdelta = ivEntries[ix * (ny2) + jx] - avg;
+      absdelta = (absdelta < 0.0 ? -absdelta : absdelta);
+      abssum += absdelta;
+    }
   }
 
-  /* //compute differences (in nextTimeEntries since the contents are copied to ivEntries) */
-  if ( niter != 0) {
-    memcpy(avgDiffEntries, nextTimeEntries, nx*ny*sizeof(double));
-  } else {
-    memcpy(avgDiffEntries, ivEntries, nx*ny*sizeof(double));
+  /*
+  printf("rank %d\n", mpi_rank);
+  for (size_t ii = 1; ii < nx + 1; ii++) {
+    for (size_t ij = 1; ij < ny + 1; ij++) {
+      printf("%f\t", ivEntries[ii * (ny + 2) + ij]);
+    }
+    printf("\b\n");
   }
-  for ( int ix = 0; ix < nx*ny; ++ix ) {
-    avgDiffEntries[ix] -= avg;
-    avgDiffEntries[ix] = ( avgDiffEntries[ix] < 0 ? avgDiffEntries[ix]*-1.: avgDiffEntries[ix] );
+   */
+
+  // double absavg = abssum / (double)(nx * ny);
+
+  double redAbsSum = 0.0;
+  MPI_Reduce(&abssum, &redAbsSum, 1, MPI_DOUBLE, MPI_SUM, 0, mpiworld);
+  double absavg = redAbsSum / (double)(nx * ny);
+
+  // endtim = MPI_Wtime();
+  // tiktork = endtim - strtim;
+  // if (mpi_rank == 0) {
+  //   printf("compute avg time %f\n", tiktork);
+  // }
+
+  if (mpi_rank == 0) {
+    free(ivEntriesFull);
   }
-
-  double avgDiff = computeAverage(avgDiffEntries, nx, ny);
-  printf("average: %e\n", avg);
-  printf("average absolute difference: %e\n", avgDiff);
-
-  free(avgDiffEntries);
   free(nextTimeEntries);
   free(ivEntries);
-  
-  return 0;
-}
+  // free(poss);
+  // free(lens);
 
-double computeNextTemp(const double* hij, const double* hijW, const double* hijE, const double* hijS, const double* hijN, const double* c)
-{
-  return (*hij) + (*c)*( ((*hijW) + (*hijE) + (*hijS) + (*hijN))/4 - (*hij));
-}
+  if (mpi_rank == 0) {
+    printf("average: %e\n", avg);
+    printf("average absolute difference: %e\n", absavg);
 
-double computeAverage(const double* tempArray, int nx, int ny)
-{
-  double sum=0.;
-  for ( int ix = 0; ix < nx*ny; ++ix ) {
-    sum += tempArray[ix];
+    // double endtim = MPI_Wtime();
+    // double tiktork = endtim - strtim;
+    // printf("run time %f\n", tiktork);
   }
-  return sum/(nx*ny);
+
+  MPI_Finalize();
+  return 0;
 }
