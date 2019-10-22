@@ -1,6 +1,6 @@
 CC := mpicc 
-CFLAGS := -std=c11 -O3 -Wall -pthread -flto -ffast-math -march=native
-LIBS := -lpthread -lm
+CFLAGS := -std=c11 -O3 -Wall -flto -ffast-math -march=native
+LIBS := 
 
 OBJS := heat_diffusion.o 
 
