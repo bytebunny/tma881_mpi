@@ -5,8 +5,6 @@ int
 main(int argc, char* argv[])
 {
   MPI_Init(NULL, NULL);
-  // double strtim, endtim, tiktork;
-  // double strtim = MPI_Wtime();
   int nmb_mpi_proc, mpi_rank;
   MPI_Comm mpiworld = MPI_COMM_WORLD;
 
@@ -34,7 +32,6 @@ main(int argc, char* argv[])
   }
   const double c1 = 1 - c;
   const double c0 = c;
-  // strtim = MPI_Wtime();
 
   int nx, ny;
   char line[80];
@@ -57,8 +54,6 @@ main(int argc, char* argv[])
   size_t const ix_sub_m = (nx - 1) / nmb_mpi_proc + 1;
   int lens[nmb_mpi_proc];
   int poss[nmb_mpi_proc];
-  // int *lens = (int *)malloc(nmb_mpi_proc * sizeof(int));
-  // int *poss = (int *)malloc(nmb_mpi_proc * sizeof(int));
   if (mpi_rank == 0) {
     for (size_t jx = 0, pos = 0; jx < nmb_mpi_proc; ++jx, pos += ix_sub_m) {
       lens[jx] = ix_sub_m < nx - pos ? ix_sub_m : nx - pos;
@@ -79,9 +74,7 @@ main(int argc, char* argv[])
   ivEntries = (double*)calloc(sizeof(double), (loclen + 2) * ny2);
   nextTimeEntries = (double*)calloc(sizeof(double), (loclen + 2) * ny2);
 
-  // read the first line
   if (mpi_rank == 0) {
-    // store initial values (note: row major order)
     int i, j;
     double t;
     while (fgets(line, sizeof(line), input) != NULL) {
@@ -107,15 +100,7 @@ main(int argc, char* argv[])
     MPI_Recv(ivEntries, (loclen + 2) * ny2, MPI_DOUBLE, 0, 0, mpiworld, NULL);
   }
 
-  // endtim = MPI_Wtime();
-  // tiktork = endtim - strtim;
-  // if (mpi_rank == 0) {
-  //   printf("send file to nodes time %f\n", tiktork);
-  // }
-
   double sum = 0.0;
-  // compute the temperatures in next time step
-  // double itrtim = 0.0, msgtim = 0.0;
   for (int n = 0; n < niter; ++n) {
     // strtim = MPI_Wtime();
     for (int ix = 1; ix < loclen + 1; ++ix) {
@@ -134,14 +119,11 @@ main(int argc, char* argv[])
         }
       }
     }
-    // endtim = MPI_Wtime();
-    // itrtim += endtim - strtim;
 
     double* swp = nextTimeEntries;
     nextTimeEntries = ivEntries;
     ivEntries = swp;
 
-    // strtim = MPI_Wtime();
     if (nmb_mpi_proc > 1) {
       // messaging from rank 0 to rank n
       if (mpi_rank == 0) {
@@ -176,37 +158,11 @@ main(int argc, char* argv[])
         MPI_Recv(recvindr2l, ny2, MPI_DOUBLE, mpi_rank + 1, 0, mpiworld, NULL);
       }
     }
-    // endtim = MPI_Wtime();
-    // msgtim += endtim - strtim;
-  } // end of iteration
-
-  // if (mpi_rank == 0) {
-  //   printf("iteration time %f\n", itrtim);
-  //   printf("msg passing time %f\n", msgtim);
-  // }
-  // printf("rank %d\n", mpi_rank);
-  // for (size_t ii = 1; ii < loclen + 1; ii++) {
-  //   for (size_t ij = 1; ij < ny + 1; ij++) {
-  //     printf("%f\t", ivEntries[ii * (ny + 2) + ij]);
-  //   }
-  //   printf("\b\n");
-  // }
-
-  // strtim = MPI_Wtime();
+  }
 
   double redSum = 0.0;
   MPI_Reduce(&sum, &redSum, 1, MPI_DOUBLE, MPI_SUM, 0, mpiworld);
   double avg = redSum / (double)(nx * ny);
-  /*
-  double abssum = 0.0;
-  for (int ix = 1; ix < nx + 1; ++ix) {
-    for (int jx = 1; jx < ny + 1; ++jx) {
-      double absdelta = ivEntries[ix * (ny + 2) + jx] - avg;
-      absdelta = (absdelta < 0.0 ? -absdelta : absdelta);
-      abssum += absdelta;
-    }
-  }
-  */
   MPI_Bcast(&avg, 1, MPI_DOUBLE, 0, mpiworld);
   double abssum = 0.0;
   for (int ix = 1; ix < loclen + 1; ++ix) {
@@ -217,43 +173,19 @@ main(int argc, char* argv[])
     }
   }
 
-  /*
-  printf("rank %d\n", mpi_rank);
-  for (size_t ii = 1; ii < nx + 1; ii++) {
-    for (size_t ij = 1; ij < ny + 1; ij++) {
-      printf("%f\t", ivEntries[ii * (ny + 2) + ij]);
-    }
-    printf("\b\n");
-  }
-   */
-
-  // double absavg = abssum / (double)(nx * ny);
-
   double redAbsSum = 0.0;
   MPI_Reduce(&abssum, &redAbsSum, 1, MPI_DOUBLE, MPI_SUM, 0, mpiworld);
   double absavg = redAbsSum / (double)(nx * ny);
-
-  // endtim = MPI_Wtime();
-  // tiktork = endtim - strtim;
-  // if (mpi_rank == 0) {
-  //   printf("compute avg time %f\n", tiktork);
-  // }
 
   if (mpi_rank == 0) {
     free(ivEntriesFull);
   }
   free(nextTimeEntries);
   free(ivEntries);
-  // free(poss);
-  // free(lens);
 
   if (mpi_rank == 0) {
     printf("average: %e\n", avg);
     printf("average absolute difference: %e\n", absavg);
-
-    // double endtim = MPI_Wtime();
-    // double tiktork = endtim - strtim;
-    // printf("run time %f\n", tiktork);
   }
 
   MPI_Finalize();
