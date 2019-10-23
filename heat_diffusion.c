@@ -193,9 +193,8 @@ main(int argc, char* argv[])
   // strtim = MPI_Wtime();
 
   double redSum = 0.0;
-  MPI_Reduce(&sum, &redSum, 1, MPI_DOUBLE, MPI_SUM, 0, mpiworld);
+  MPI_Allreduce(&sum, &redSum, 1, MPI_DOUBLE, MPI_SUM, mpiworld);
   double avg = redSum / (double)(nx * ny);
-  MPI_Bcast(&avg, 1, MPI_DOUBLE, 0, mpiworld);
 
   double abssum = 0.0;
   for (ib = 1; ib < loclen + 1; ib += bsize) {
