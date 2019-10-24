@@ -106,12 +106,6 @@ main(int argc, char* argv[])
     MPI_Recv(ivEntries, (loclen + 2) * ny2, MPI_DOUBLE, 0, 0, mpiworld, &recvsta);
   }
 
-  // endtim = MPI_Wtime();
-  // tiktork = endtim - strtim;
-  // if (mpi_rank == 0) {
-  //   printf("send file to nodes time %f\n", tiktork);
-  // }
-
   int bsize = 3000, ib, jb, ie, je;
   double sum = 0.0;
   // compute the temperatures in next time step
@@ -145,10 +139,6 @@ main(int argc, char* argv[])
     nextTimeEntries = ivEntries;
     ivEntries = swp;
 
-    // endtim = MPI_Wtime();
-    // itrtim += endtim - strtim;
-    // strtim = MPI_Wtime();
-
     if (nmb_mpi_proc > 1) {
       // messaging from rank 0 to rank n
       if (mpi_rank == 0) {
@@ -180,18 +170,7 @@ main(int argc, char* argv[])
         MPI_Recv(recvindr2l, ny2, MPI_DOUBLE, mpi_rank + 1, 0, mpiworld, &recvsta);
       }
     }
-    // endtim = MPI_Wtime();
-    // msgtim += endtim - strtim;
   }
-
-  // if (mpi_rank == 0) {
-  //   printf("iteration time %f\n", itrtim);
-  // }
-  // if (mpi_rank == 1) {
-  //   printf("msg passing time %f\n", msgtim);
-  // }
-
-  // strtim = MPI_Wtime();
 
   double redSum = 0.0;
   MPI_Allreduce(&sum, &redSum, 1, MPI_DOUBLE, MPI_SUM, mpiworld);
@@ -215,12 +194,6 @@ main(int argc, char* argv[])
   double redAbsSum = 0.0;
   MPI_Reduce(&abssum, &redAbsSum, 1, MPI_DOUBLE, MPI_SUM, 0, mpiworld);
   double absavg = redAbsSum / (double)(nx * ny);
-
-  // endtim = MPI_Wtime();
-  // tiktork = endtim - strtim;
-  // if (mpi_rank == 1) {
-  //   printf("compute avg time %f\n", tiktork);
-  // }
 
   if (mpi_rank == 0) {
     free(ivEntriesFull);
