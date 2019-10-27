@@ -66,12 +66,13 @@ main(int argc, char* argv[])
   MPI_Bcast(poss, nmb_mpi_proc, MPI_INT, 0, mpiworld);
   const int loclen = lens[mpi_rank];
   const int lastNodeRnk = nmb_mpi_proc - 1;
+  MPI_Status recvsta;
 
   double* ivEntriesFull;
   double* ivEntries;
   double* nextTimeEntries;
   if (mpi_rank == 0) {
-    ivEntriesFull = (double*)calloc(sizeof(double), nx2ny2);
+    ivEntriesFull = (double*)calloc(nx2ny2, sizeof(double));
   }
   ivEntries = (double*)aligned_alloc(64, sizeof(double) * (loclen + 2) * ny2);
   nextTimeEntries =
@@ -102,7 +103,7 @@ main(int argc, char* argv[])
     }
   }
   if (mpi_rank > 0) {
-    MPI_Recv(ivEntries, (loclen + 2) * ny2, MPI_DOUBLE, 0, 0, mpiworld, NULL);
+    MPI_Recv(ivEntries, (loclen + 2) * ny2, MPI_DOUBLE, 0, 0, mpiworld, &recvsta);
   }
 
   int bsize = 3000, ib, jb, ie, je;
@@ -146,18 +147,18 @@ main(int argc, char* argv[])
         MPI_Send(sendind, ny2, MPI_DOUBLE, 1, 0, mpiworld);
         // receive right rank top line to the curren rank btm - 1
         double* recvind = ivEntries + (loclen + 1) * (ny2);
-        MPI_Recv(recvind, ny2, MPI_DOUBLE, 1, 0, mpiworld, NULL);
+        MPI_Recv(recvind, ny2, MPI_DOUBLE, 1, 0, mpiworld, &recvsta);
       } else if (mpi_rank == lastNodeRnk) {
         // receive left rank last line to the curren rank top - 1
         double* recvind = ivEntries;
-        MPI_Recv(recvind, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld, NULL);
+        MPI_Recv(recvind, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld, &recvsta);
         // send the curren rank top line to the left rank
         double* sendind = ivEntries + (ny2);
         MPI_Send(sendind, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld);
       } else {
         // receive left rank last line to the curren rank top - 1
         double* recvindl2r = ivEntries;
-        MPI_Recv(recvindl2r, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld, NULL);
+        MPI_Recv(recvindl2r, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld, &recvsta);
         // send the curren rank last line to the right rank
         double* sendindl2r = ivEntries + loclen * (ny2);
         MPI_Send(sendindl2r, ny2, MPI_DOUBLE, mpi_rank + 1, 0, mpiworld);
@@ -166,7 +167,7 @@ main(int argc, char* argv[])
         MPI_Send(sendindr2l, ny2, MPI_DOUBLE, mpi_rank - 1, 0, mpiworld);
         // receive right rank top line to the curren rank btm - 1
         double* recvindr2l = ivEntries + (loclen + 1) * (ny2);
-        MPI_Recv(recvindr2l, ny2, MPI_DOUBLE, mpi_rank + 1, 0, mpiworld, NULL);
+        MPI_Recv(recvindr2l, ny2, MPI_DOUBLE, mpi_rank + 1, 0, mpiworld, &recvsta);
       }
     }
   }
