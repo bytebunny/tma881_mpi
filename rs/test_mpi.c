@@ -6,11 +6,15 @@ int main(
     char * argv[]
     )
 {
+  int a = 3; // still a private variable for each process. This is a bas programming style, this statement should be moved after MPI_Init().
   MPI_Init(&argc, &argv);
 
   int nmb_mpi_proc, mpi_rank;
   MPI_Comm_size(MPI_COMM_WORLD, &nmb_mpi_proc);
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+
+  a += 1;
+  printf("%d\n", a);
 
   if (mpi_rank==0) { // master
     printf( "Number of processes: %d\n", nmb_mpi_proc );

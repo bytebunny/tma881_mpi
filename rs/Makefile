@@ -14,7 +14,7 @@ heat_diffusion: $(OBJS)
 test_mpi: test_mpi.o
 	$(CC) -o $@ test_mpi.o $(CFLAGS) $(LIBS)
 
-$(OBJS) : heat_diffusion.h
+$(OBJS) : heat_diffusion.c heat_diffusion.h
 
 test:
 	tar -czvf heat_diffusion.tar.gz heat_diffusion.c heat_diffusion.h Makefile
