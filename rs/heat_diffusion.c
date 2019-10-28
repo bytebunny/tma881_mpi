@@ -13,13 +13,14 @@ int main(int argc, char* argv[])
   // Declare variables for all processes (to skip declarations in every scope):
   double conductivity;
   int niter, width, height, total_size;
+  double hij, hijW, hijE, hijS, hijN;
   struct input_struct{
     double c;
     int    n, w, h;
   } inputs;
   double * grid_init; // pointer to memory with initial temperatures.
 
- if (mpi_rank == 0) // master process:
+ if (mpi_rank == 0) /////////////////////// master process /////////////////////
    {
       char* ptr1 = NULL;
       char* ptr2 = NULL;
@@ -67,7 +68,7 @@ int main(int argc, char* argv[])
       inputs.w = width;
       inputs.h = height;
    }
- 
+ //////////////////////////// all processes ////////////////////////////////////
  // Create custom MPI data type for the structure inputs:
  MPI_Datatype mpi_double_3int;
  int block_lengths[4] = {1,1,1,1}; // 1 double and 3 single integers in structure. 
@@ -89,27 +90,84 @@ int main(int argc, char* argv[])
             0, // master sends out inputs.
             MPI_COMM_WORLD );
 
- if (mpi_rank == 0) // master process
+ if (mpi_rank == 0) ////////////////// master process //////////////////////////
    {
      // distribute the work (each process recieves only its part of array):
-     int row_start, row_end;
+     int row_start = 0, row_end = 0; // initialize to prevent execution when rank > row number
      for ( int mpi_proc = 1; // master (0) already has access to its part.
            mpi_proc < nmb_mpi_proc;
-           ++mpi_proc ){
-       // to process row i rows i-1 and i+1 are needed:
-       row_start = mpi_proc * height / nmb_mpi_proc - 1; 
-       row_end = (mpi_proc + 1)* height / nmb_mpi_proc;
+           ++mpi_proc )
+       {
+         if ( nmb_mpi_proc < height) {
+           // to process row i rows i-1 and i+1 are needed:
+           row_start = mpi_proc * height / nmb_mpi_proc - 1; 
+           row_end = (mpi_proc + 1)* height / nmb_mpi_proc;
+         }
+         else{ // if there are more processes than rows:
+           if ( mpi_rank < height ){
+             row_start = mpi_rank - 1;
+             row_end = mpi_rank + 1;
+           }
+         }
 
-       MPI_Send( grid_init + row_start * width, // address of send buffer.
-                 (row_end - row_start) * width, // number of elements.
-                 MPI_DOUBLE, mpi_proc, // destination.
-                 mpi_proc, MPI_COMM_WORLD );
-     }
+         if (row_end - row_start > 0){ // if there is work for this process:
+           MPI_Send( grid_init + row_start * width, // address of send buffer.
+                     (row_end - row_start) * width, // number of elements.
+                     MPI_DOUBLE, mpi_proc, // destination.
+                     mpi_proc, MPI_COMM_WORLD );
+         }
+       }
      
+     //////////////////////////// Update temperatures //////////////////////////
+     // Decide on the rows of the grid handled by the master process:
+     row_start = 0; // master starts from the 1st row.
+     if ( nmb_mpi_proc < height) row_end = height / nmb_mpi_proc;
+     else row_end = 1; // if there are more processes than rows.
 
-     // Update the boundary shared with other process
+     // Allocate space for rows to be updated and 1 interface row to receive 
+     double * grid_local_new = (double *) malloc( ( row_end + 1 - row_start ) *
+                                                  width * sizeof(double) );
+     double * temp_ptr; // point to swap old and new temperatures.
+
+     for ( int iter = 0; iter < niter; ++iter ) {
+       for ( int ix = row_start; ix < row_end; ++ix ) {
+         for ( int jx = 0; jx < width; ++jx )
+           {
+             hij = grid_init[ ix * width +jx ];
+             hijW = ( jx-1 >= 0 ? grid_init[ ix * width + jx-1 ] : 0. );
+             hijE = ( jx+1 < width ? grid_init[ ix * width + jx+1 ] : 0.);
+             hijS = ( ix+1 < height ? grid_init[ (ix+1) * width + jx ] : 0.);
+             hijN = ( ix-1 >= 0 ? grid_init[ (ix-1) * width + jx ] : 0.);
+             
+             grid_local_new[ ix * width + jx] = (1. - c) * hij +
+               c * 0.25 * ( hijW + hijE + hijS + hijN );
+           }
+       }
+      
+       if ( nmb_mpi_proc > 1 ) {
+         MPI_Status status;
+         // Update the boundary shared with other process:
+         MPI_Sendrecv( grid_local_new + (row_end - row_start - 1) * width, // master sends its last updated row.
+                       width, MPI_DOUBLE,
+                       mpi_rank + 1, // destination.
+                       mpi_rank, // send tag
+                       // receive:
+                       grid_local_new + (row_end - row_start) * width, // shift to interface row.
+                       width, MPI_DOUBLE,
+                       mpi_rank + 1, // the next worker has local bottom row.
+                       mpi_rank + 1, // receive tag
+                       MPI_COMM_WORLD, &status );
+       }
+
+       if ( n == niter - 1 ) break; // don't swap at the last step
+       // Swap new and old arrays:
+       temp_ptr = grid_init;
+       grid_init = grid_local_new;
+       grid_local_new = temp_ptr;
+     }
+     free(grid_local_new);
    }
- else // worker processes.
+ else ////////////////////////// worker processes //////////////////////////////
    {
      // receive the part of array to work on:
      conductivity = inputs.c;
@@ -118,16 +176,76 @@ int main(int argc, char* argv[])
      height = inputs.h;
      total_size = width * height;
 
-     int row_start = mpi_rank * height / nmb_mpi_proc - 1; 
-     int row_end =  (mpi_rank + 1)* height / nmb_mpi_proc;
+     // Decide on the rows of the grid handled by the worker process:
+     int row_start = 0, row_end = 0; // initialize to prevent execution when rank > row number
+     if ( nmb_mpi_proc < height) {
+       row_start = mpi_rank * height / nmb_mpi_proc - 1; 
+       row_end =  (mpi_rank + 1)* height / nmb_mpi_proc;
+     }
+     else{ // if there are more processes than rows:
+       if ( mpi_rank < height ){
+         row_start = mpi_rank - 1;
+         row_end = mpi_rank + 1;
+       }
+     }
      double * grid_local = (double *) malloc( ( row_end - row_start ) *
                                               width * sizeof(double) );
      MPI_Status status;
-     MPI_Recv( grid_local, // receiving buffer
-               ( row_end - row_start ) * width, // number of elements
-               MPI_DOUBLE, 0, // sending process
-               mpi_rank, MPI_COMM_WORLD, &status);
+     if (row_end - row_start > 0){ // if there is work for this process:
+       MPI_Recv( grid_local, // receiving buffer
+                 ( row_end - row_start ) * width, // number of elements
+                 MPI_DOUBLE, 0, // sending process
+                 mpi_rank, MPI_COMM_WORLD, &status);
+     }
+     //////////////////////////// Update temperatures //////////////////////////
+     double * grid_local_new = (double *) malloc( ( row_end - row_start ) *
+                                                  width * sizeof(double) );
+     double * temp_ptr; // point to swap old and new temperatures.
 
+     for ( int iter = 0; iter < niter; ++iter ) {
+       for ( int ix = row_start + 1; // row_start is read-only for worker processes
+             ix < row_end; ++ix ) {
+         for ( int jx = 0; jx < width; ++jx )
+           {
+             hij = grid_local[ ix * width +jx ];
+             hijW = ( jx-1 >= 0 ? grid_local[ ix * width + jx-1 ] : 0. );
+             hijE = ( jx+1 < width ? grid_local[ ix * width + jx+1 ] : 0.);
+             hijS = ( ix+1 < height ? grid_local[ (ix+1) * width + jx ] : 0.);
+             hijN = grid_local[ (ix-1) * width + jx ]; // worker can never process the 1st row, so conditional is not necessary.
+             
+             grid_local_new[ ix * width + jx] = (1. - c) * hij +
+               c * 0.25 * ( hijW + hijE + hijS + hijN );
+           }
+       }
+
+       if ( nmb_mpi_proc > 1 ) {
+         // Update the boundary shared with other process:
+         MPI_Sendrecv( grid_local_new + width, // worker sends its 1st updated row.
+                       width, MPI_DOUBLE,
+                       mpi_rank - 1, // 1st updated row goes to previous worker.
+                       mpi_rank, // send tag
+                       // receive:
+                       grid_local_new, // receive the local top row from previous process.
+                       width, MPI_DOUBLE,
+                       mpi_rank - 1, // source: previous process has local top row.
+                       mpi_rank - 1, // receive tag
+                       MPI_COMM_WORLD, &status );
+//////////////////////// syncronize the bottom row ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+         
+
+
+
+
+       }
+
+       if ( n == niter - 1 ) break; // don't swap at the last step
+       // Swap new and old arrays:
+       temp_ptr = grid_init;
+       grid_init = grid_local_new;
+       grid_local_new = temp_ptr;
+     }
+
+     free(grid_local_new);
      free(grid_local);
    }
 
@@ -139,14 +257,6 @@ int main(int argc, char* argv[])
  /*  for ( int n = 0; n < niter; ++n ){ */
  /*    for (int ix = row_start; ix < row_end; ++ix){ */
  /*      for (int jx = 0; jx < width; ++jx){ */
- /*        hij = grid_init[ ix * width +jx ]; */
- /*        hijW = ( jx-1 >= 0 ? grid_init[ ix * width + jx-1 ] : 0. ); */
- /*        hijE = ( jx+1 < width ? grid_init[ ix * width + jx+1 ] : 0.); */
- /*        hijS = ( ix+1 < height ? grid_init[ (ix+1) * width + jx ] : 0.); */
- /*        hijN = ( ix-1 >= 0 ? grid_init[ (ix-1) * width + jx ] : 0.); */
-
- /*        nextTimeEntries[ ix * width + jx] = hij + */
- /*          c * ( 0.25 * ( hijW + hijE + hijS + hijN ) - hij ); */
  /*      } */
  /*    } */
  /*    for ( int i =0; i < nmb_mpi_proc; ++i){ */
@@ -155,11 +265,6 @@ int main(int argc, char* argv[])
  /*    } */
 
 
- /*    if ( n == niter - 1 ) break; // don't swap at the last step */
- /*    // Swap new and old arrays: */
- /*    dummy_ptr = grid_init; */
- /*    grid_init = nextTimeEntries; */
- /*    nextTimeEntries = dummy_ptr; */
  /*  } */
 
   //////////////////////////// Compute average /////////////////////////////////
