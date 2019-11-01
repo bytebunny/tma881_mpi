@@ -133,7 +133,6 @@ int main(int argc, char* argv[])
      double * temp_ptr; // point to swap old and new temperatures.
 
      for ( int iter = 0; iter < niter; ++iter ) {
-//printf("---iteration %d---\n",iter+1);
        for ( int ix = row_start; ix < row_end; ++ix ) { // row start is always 0, so there is no shift (unlike worker).
          for ( int jx = 0; jx < width; ++jx )
            {
@@ -145,10 +144,7 @@ int main(int argc, char* argv[])
              
              grid_local_new[ ix * width + jx] = (1. - conductivity) * hij +
                conductivity * 0.25 * ( hijW + hijE + hijS + hijN );
-//printf("%lf ",grid_local_new[ix * width + jx]);
-
            }
-//printf("\n");
        }
       
        if ( nmb_mpi_proc > 1 ) {
@@ -184,7 +180,6 @@ int main(int argc, char* argv[])
            }
      }
      double sum_master = sum0 + sum1 + sum2;
-printf("sum master: %e\n", sum_master  );
      
      double sum_total;
      MPI_Allreduce( &sum_master, // send buffer
@@ -192,10 +187,41 @@ printf("sum master: %e\n", sum_master  );
                     MPI_DOUBLE, MPI_SUM,
                     MPI_COMM_WORLD );
      double avg = sum_total / total_size;
-printf("avg total on master: %e\n", avg  );
+     printf("average: %e\n", avg);
+
      //////////////////////// Compute average of abs diff //////////////////////
+     sum0 = 0, sum1 = 0, sum2 = 0;
+     for ( int ix = row_start; ix < row_end; ++ix ) { // row start is always 0, so there is no shift (unlike worker).
+       for ( int jx = 0; jx < width; jx += 3 )
+           {
+             grid_local_new[ ix * width + jx ] -= avg;
+             sum0 += ( grid_local_new[ ix * width + jx ] < 0. ?
+                       -1. * grid_local_new[ ix * width + jx ] :
+                       grid_local_new[ ix * width + jx ] );
+
+             grid_local_new[ ix * width + jx + 1] -= avg;
+             sum1 += ( grid_local_new[ ix * width + jx + 1 ] < 0. ?
+                       -1. * grid_local_new[ ix * width + jx + 1 ] :
+                       grid_local_new[ ix * width + jx + 1 ] );
+
+             grid_local_new[ ix * width + jx + 2] -= avg;
+             sum2 += ( grid_local_new[ ix * width + jx + 2 ] < 0. ?
+                       -1. * grid_local_new[ ix * width + jx + 2 ] :
+                       grid_local_new[ ix * width + jx + 2 ] );
+           }
+     }
+     double diff_sum_master = sum0 + sum1 + sum2;
+     // Reduce to master only:
+     MPI_Reduce( &diff_sum_master, // send buffer
+                 &sum_total, 1, // receive one sent element
+                 MPI_DOUBLE, MPI_SUM,
+                 mpi_rank, // root
+                 MPI_COMM_WORLD );
+     double diff_avg = sum_total / total_size;
+     printf("average of abs diff: %e\n", diff_avg);
 
      free(grid_local_new);
+     free(grid_init);
    }
  else ////////////////////////// worker processes //////////////////////////////
    {
@@ -298,7 +324,6 @@ printf("avg total on master: %e\n", avg  );
            }
      }
      double sum_worker = sum0 + sum1 + sum2;
-printf("sum worker %d: (%d, %d): %e\n", mpi_rank, row_start+1, row_end,  sum_worker );
 
      double sum_total;
      MPI_Allreduce( &sum_worker, // send buffer
@@ -306,159 +331,43 @@ printf("sum worker %d: (%d, %d): %e\n", mpi_rank, row_start+1, row_end,  sum_wor
                     MPI_DOUBLE, MPI_SUM,
                     MPI_COMM_WORLD );
      double avg = sum_total / total_size;
-printf("avg total on worker %d: %e\n", mpi_rank, avg  );
+
+     //////////////////////// Compute average of abs diff //////////////////////
+     sum0 = 0, sum1 = 0, sum2 = 0;
+     for ( int ix = 1; // the 1st row is read-only for worker processes
+           ix < n_rows_worker; ++ix ) {
+       for ( int jx = 0; jx < width; jx += 3 )
+           {
+             grid_local_new[ ix * width + jx ] -= avg;
+             sum0 += ( grid_local_new[ ix * width + jx ] < 0. ?
+                       -1. * grid_local_new[ ix * width + jx ] :
+                       grid_local_new[ ix * width + jx ] );
+
+             grid_local_new[ ix * width + jx + 1] -= avg;
+             sum1 += ( grid_local_new[ ix * width + jx + 1 ] < 0. ?
+                       -1. * grid_local_new[ ix * width + jx + 1 ] :
+                       grid_local_new[ ix * width + jx + 1 ] );
+
+             grid_local_new[ ix * width + jx + 2] -= avg;
+             sum2 += ( grid_local_new[ ix * width + jx + 2 ] < 0. ?
+                       -1. * grid_local_new[ ix * width + jx + 2 ] :
+                       grid_local_new[ ix * width + jx + 2 ] );
+           }
+     }
+     double diff_sum_worker = sum0 + sum1 + sum2;
+
+     // Reduce to master only:
+     MPI_Reduce( &diff_sum_worker, // send buffer
+                 &sum_total, 1, // receive one sent element, meaningfull only at root
+                 MPI_DOUBLE, MPI_SUM,
+                 0, // root
+                 MPI_COMM_WORLD );
 
      free(grid_local_new);
      free(grid_local);
    }
-
-
- /* int const sub_size = (height - 1) / nmb_mpi_proc + 1; // split row-wise. */
-  
-
- /*  double hij, hijW, hijE, hijS, hijN; */
- /*  for ( int n = 0; n < niter; ++n ){ */
- /*    for (int ix = row_start; ix < row_end; ++ix){ */
- /*      for (int jx = 0; jx < width; ++jx){ */
- /*      } */
- /*    } */
- /*    for ( int i =0; i < nmb_mpi_proc; ++i){ */
- /*    MPI_Bcast( nextTimeEntries + row_start*width, (row_end-row_start)*width, */
- /*               MPI_DOUBLE, i, MPI_COMM_WORLD); */
- /*    } */
-
-
- /*  } */
-
-  //////////////////////////// Compute average /////////////////////////////////
-  /* double loc_sum = 0; */
-  /* for ( int ix = row_start; ix < row_end; ++ix ) { */
-  /*   for ( int jx = 0; jx < width; ++jx ) { */
-  /*     loc_sum += nextTimeEntries[ ix * width + jx ]; */
-  /*   } */
-  /* } */
-  /* double total_sum; */
-  /* MPI_Reduce( &loc_sum, &total_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD ); */
-  /* double avg = total_sum / total_size; */
-
-
-  //////////////////////// Compute average of abs diff /////////////////////////
-  /* loc_sum = 0; */
-  /* for ( int ix = row_start; ix < row_end; ++ix ) { */
-  /*   for ( int jx = 0; jx < width; ++jx ) { */
-  /*     nextTimeEntries[ ix * width + jx ] -= avg; */
-  /*     loc_sum += ( nextTimeEntries[ ix * width + jx ] < 0. ? -1. * nextTimeEntries[ ix * width + jx ] : nextTimeEntries[ ix * width + jx ] ); */
-  /*   } */
-  /* } */
-  /* MPI_Reduce( &loc_sum, &total_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD ); */
-  /* double avg_diff = total_sum / total_size; */
-
-  //////////////////////////////// Processing //////////////////////////////////
-  /* int scatter_root = 0; // master */
-  /* int const sub_size = (height - 1) / nmb_mpi_proc + 1; // split row-wise. */
-
-  /* int * len_array = (int *) malloc( nmb_mpi_proc * sizeof(int) ); */
-  /* int * pos_array = (int *) malloc( nmb_mpi_proc * sizeof(int) ); */
-  /* for ( int jx=0, pos=0;  jx < nmb_mpi_proc;  ++jx, pos += sub_size-2 ) { */
-  /*   len_array[jx] = sub_size < height - pos ? (sub_size+2)*width : (height - pos)*width; */
-  /*   pos_array[jx] = pos * width; */
-  /*   if (mpi_rank==0) */
-  /*     printf("len pos %d %d\n", len_array[jx], pos_array[jx]); */
-  /* } */
-
-  /* int * len_gather_array = (int *) malloc( nmb_mpi_proc * sizeof(int) ); */
-  /* int * pos_gather_array = (int *) malloc( nmb_mpi_proc * sizeof(int) ); */
-  /* for ( int jx=0, pos=0;  jx < nmb_mpi_proc;  ++jx, pos += sub_size ) { */
-  /*   len_gather_array[jx] = sub_size < height - pos ? sub_size*width : (height - pos)*width; */
-  /*   pos_gather_array[jx] = pos * width; */
-  /* } */
-
-  /* double * temperature_sub = (double *) malloc( (sub_size + (int)2) * width * sizeof(double) ); */
-  /* double * temperature_sub_new = (double *) malloc( (sub_size + (int)2) * width * sizeof(double) ); */
-  /* double hij, hijW, hijE, hijS, hijN; */
-  /* int shift; */
-  /* for ( int n = 0; n < niter; ++n ){ */
-  /*   MPI_Scatterv( grid_init, len_array, pos_array, MPI_DOUBLE, */
-  /*                 temperature_sub, (sub_size+2)*width, MPI_DOUBLE, */
-  /*                 scatter_root, MPI_COMM_WORLD); */
-    
-  /*   for ( int ix = 0; ix < len_array[mpi_rank] / width; ++ix ){ */
-  /*     if ( pos_array[mpi_rank] != 0 && ix == 0 ) continue; // skip the 1st local row, unless it's the 1st global one. */
-  /*     else if ( pos_array[mpi_rank] + ix + 1 != height && // skip the last local row, unless it's the last global one. */
-  /*               ix == len_array[mpi_rank] - 1 ) continue; //  */
-      
-  /*     for ( int jx = 0; jx < width; ++jx ){ */
-  /*       hij = temperature_sub[ ix * width +jx ]; */
-  /*       hijW = ( jx-1 >= 0 ? temperature_sub[ ix * width + jx-1] : 0. ); */
-  /*       hijE = ( jx+1 < width  ? temperature_sub[ ix * width + jx+1] : 0. ); */
-  /*       hijS = ( (pos_array[mpi_rank]+ix+1) < height ? temperature_sub[ (ix+1) * width + jx] : 0.); */
-  /*       hijN = ( (pos_array[mpi_rank]+ix-1) >= 0 ? temperature_sub[ (ix-1) * width + jx] : 0.); */
-  /*       temperature_sub_new[ ix * width ] = hij + */
-  /*         c * ( 0.25*( hijW + hijE + hijS + hijN ) - hij); */
-  /*     } */
-  /*   } */
-  /*   if ( mpi_rank == 0 ) shift = 0; */
-  /*   else shift = 1; */
-  /*   MPI_Gatherv( temperature_sub_new + shift * width, sub_size * width, MPI_DOUBLE, */
-  /*                grid_init, len_gather_array, pos_gather_array, MPI_DOUBLE, */
-  /*                scatter_root, MPI_COMM_WORLD); */
-  /* } */
-
-  //compute average temperature
-//  double avg = computeAverage(nextTimeEntries, width, height);
-
-  /* double* avgDiffEntries = (double*) malloc(sizeof(double)*width*height); */
-  /* for (int ix = 0; ix < width*height; ++ix) { */
-  /*   avgDiffEntries[ix] = 0.; */
-  /* } */
-
-  /* /\* //compute differences (in nextTimeEntries since the contents are copied to grid_init) *\/ */
-  /* if ( niter != 0) { */
-  /*   memcpy(avgDiffEntries, nextTimeEntries, width*height*sizeof(double)); */
-  /* } else { */
-  /*   memcpy(avgDiffEntries, grid_init, width*height*sizeof(double)); */
-  /* } */
-  /* for ( int ix = 0; ix < width*height; ++ix ) { */
-  /*   avgDiffEntries[ix] -= avg; */
-  /*   avgDiffEntries[ix] = ( avgDiffEntries[ix] < 0 ? avgDiffEntries[ix]*-1.: avgDiffEntries[ix] ); */
-  /* } */
-
-  /* double avgDiff = computeAverage(avgDiffEntries, width, height); */
-/* if (mpi_rank == 0) {// master process: */
-/*   printf("average: %e\n", avg); */
-/*   printf("average absolute difference: %e\n", avg_diff); */
-/* } */
-
-  // Clean up:
-  /* free(len_gather_array); */
-  /* free(pos_gather_array); */
-  /* free(len_array); */
-  /* free(pos_array); */
-  /* free(temperature_sub); */
-  /* free(temperature_sub_new); */
-//  free(avgDiffEntries);
-
-
- if (mpi_rank == 0) free(grid_init);
  
  MPI_Finalize();
-
-
-//  free(nextTimeEntries);
-  
-  return 0;
-}
-
-double computeNextTemp(const double* hij, const double* hijW, const double* hijE, const double* hijS, const double* hijN, const double* c)
-{
-  return (*hij) + (*c)*( ((*hijW) + (*hijE) + (*hijS) + (*hijN))/4 - (*hij));
-}
-
-double computeAverage(const double* tempArray, int width, int height)
-{
-  double sum=0.;
-  for ( int ix = 0; ix < width*height; ++ix ) {
-    sum += tempArray[ix];
-  }
-  return sum/(width*height);
+ 
+ return 0;
 }
