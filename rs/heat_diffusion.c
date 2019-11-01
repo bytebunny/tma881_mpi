@@ -170,16 +170,17 @@ int main(int argc, char* argv[])
      }
 
      ////////////////////////// Compute average temperature ////////////////////
-     double sum0 = 0, sum1 = 0, sum2 = 0;
+     double sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
      for ( int ix = row_start; ix < row_end; ++ix ) { // row start is always 0, so there is no shift (unlike worker).
-       for ( int jx = 0; jx < width; jx += 3 )
+       for ( int jx = 0; jx < width; jx += 4 )
            {
              sum0 += grid_local_new[ ix * width + jx     ];
              sum1 += grid_local_new[ ix * width + jx + 1 ];
              sum2 += grid_local_new[ ix * width + jx + 2 ];
+             sum3 += grid_local_new[ ix * width + jx + 3 ];
            }
      }
-     double sum_master = sum0 + sum1 + sum2;
+     double sum_master = sum0 + sum1 + sum2 + sum3;
      
      double sum_total;
      MPI_Allreduce( &sum_master, // send buffer
@@ -190,9 +191,9 @@ int main(int argc, char* argv[])
      printf("average: %e\n", avg);
 
      //////////////////////// Compute average of abs diff //////////////////////
-     sum0 = 0, sum1 = 0, sum2 = 0;
+     sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
      for ( int ix = row_start; ix < row_end; ++ix ) { // row start is always 0, so there is no shift (unlike worker).
-       for ( int jx = 0; jx < width; jx += 3 )
+       for ( int jx = 0; jx < width; jx += 4 )
            {
              grid_local_new[ ix * width + jx ] -= avg;
              sum0 += ( grid_local_new[ ix * width + jx ] < 0. ?
@@ -208,9 +209,14 @@ int main(int argc, char* argv[])
              sum2 += ( grid_local_new[ ix * width + jx + 2 ] < 0. ?
                        -1. * grid_local_new[ ix * width + jx + 2 ] :
                        grid_local_new[ ix * width + jx + 2 ] );
+
+             grid_local_new[ ix * width + jx + 3] -= avg;
+             sum3 += ( grid_local_new[ ix * width + jx + 3 ] < 0. ?
+                       -1. * grid_local_new[ ix * width + jx + 3 ] :
+                       grid_local_new[ ix * width + jx + 3 ] );
            }
      }
-     double diff_sum_master = sum0 + sum1 + sum2;
+     double diff_sum_master = sum0 + sum1 + sum2 + sum3;
      // Reduce to master only:
      MPI_Reduce( &diff_sum_master, // send buffer
                  &sum_total, 1, // receive one sent element
@@ -313,17 +319,18 @@ int main(int argc, char* argv[])
      }
 
      ////////////////////////// Compute average temperature ////////////////////
-     double sum0 = 0, sum1 = 0, sum2 = 0;
+     double sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
      for ( int ix = 1; // the 1st row is read-only for worker processes
            ix < n_rows_worker; ++ix ) {
-       for ( int jx = 0; jx < width; jx += 3 )
+       for ( int jx = 0; jx < width; jx += 4 )
            {
              sum0 += grid_local_new[ ix * width + jx     ];
              sum1 += grid_local_new[ ix * width + jx + 1 ];
              sum2 += grid_local_new[ ix * width + jx + 2 ];
+             sum3 += grid_local_new[ ix * width + jx + 3 ];
            }
      }
-     double sum_worker = sum0 + sum1 + sum2;
+     double sum_worker = sum0 + sum1 + sum2 + sum3;
 
      double sum_total;
      MPI_Allreduce( &sum_worker, // send buffer
@@ -333,10 +340,10 @@ int main(int argc, char* argv[])
      double avg = sum_total / total_size;
 
      //////////////////////// Compute average of abs diff //////////////////////
-     sum0 = 0, sum1 = 0, sum2 = 0;
+     sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
      for ( int ix = 1; // the 1st row is read-only for worker processes
            ix < n_rows_worker; ++ix ) {
-       for ( int jx = 0; jx < width; jx += 3 )
+       for ( int jx = 0; jx < width; jx += 4 )
            {
              grid_local_new[ ix * width + jx ] -= avg;
              sum0 += ( grid_local_new[ ix * width + jx ] < 0. ?
@@ -352,9 +359,14 @@ int main(int argc, char* argv[])
              sum2 += ( grid_local_new[ ix * width + jx + 2 ] < 0. ?
                        -1. * grid_local_new[ ix * width + jx + 2 ] :
                        grid_local_new[ ix * width + jx + 2 ] );
+
+             grid_local_new[ ix * width + jx + 3] -= avg;
+             sum3 += ( grid_local_new[ ix * width + jx + 3 ] < 0. ?
+                       -1. * grid_local_new[ ix * width + jx + 3 ] :
+                       grid_local_new[ ix * width + jx + 3 ] );
            }
      }
-     double diff_sum_worker = sum0 + sum1 + sum2;
+     double diff_sum_worker = sum0 + sum1 + sum2 + sum3;
 
      // Reduce to master only:
      MPI_Reduce( &diff_sum_worker, // send buffer
